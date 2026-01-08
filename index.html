@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+  <title>ESP32 伸縮遙控器</title>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <style>
+    :root{
+      --bg: #0b0f14;
+      --panel: #121a24;
+      --text: #e8eef7;
+      --muted: rgba(232,238,247,.75);
+      --border: rgba(232,238,247,.12);
+      --btn: #1a2533;
+      --btnDown: #233246;
+      --danger: #ff4d4d;
+      --warn: #ffcc00;
+      --ok: #25d366;
+      --info: #3aa0ff;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); }
+    body {
+      font-family: system-ui, -apple-system, "Noto Sans TC", sans-serif;
+      display: flex;
+      flex-direction: column;
+      padding: 14px;
+      gap: 12px;
+      user-select: none;            /* 防選字 */
+      -webkit-user-select: none;
+      touch-action: manipulation;   /* 減少雙擊縮放問題 */
+    }
+
+    .topbar{
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 12px 12px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap: 10px;
+    }
+    .title{
+      display:flex;
+      flex-direction:column;
+      gap: 2px;
+      line-height:1.1;
+    }
+    .title b{ font-size: 16px; }
+    .title span{ font-size: 12px; color: var(--muted); }
+
+    .status{
+      display:flex;
+      align-items:center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .dot{
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      background: var(--warn);
+      box-shadow: 0 0 0 4px rgba(255,204,0,.12);
+    }
+
+    .grid{
+      flex: 1;
+      display: grid;
+      grid-template-rows: 1fr 1fr;
+      gap: 12px;
+      min-height: 0;
+    }
+
+    .btn{
+      width: 100%;
+      height: 100%;
+      border-radius: 18px;
+      border: 1px solid var(--border);
+      background: var(--btn);
+      color: var(--text);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      flex-direction:column;
+      gap: 10px;
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: .5px;
+    }
+    .btn small{
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--muted);
+    }
+    .btn:active, .btn.holding{
+      background: var(--btnDown);
+      transform: scale(0.99);
+    }
+
+    .footer{
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 10px 12px;
+      font-size: 12px;
+      color: var(--muted);
+      display:flex;
+      justify-content:space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    code{ color: rgba(232,238,247,.9); }
+  </style>
+</head>
+<body>
+
+  <div class="topbar">
+    <div class="title">
+      <b>伸縮遙控器（長按才動）</b>
+      <span>兩顆馬達同步｜放開自動停｜ESP32 有 1 秒保險停</span>
+    </div>
+    <div class="status">
+      <div class="dot" id="dot"></div>
+      <div id="statusText">連線中…</div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <button class="btn" id="btnExtend">
+      ⬆ 伸出
+      <small>長按才會動</small>
+    </button>
+
+    <button class="btn" id="btnRetract">
+      ⬇ 縮回
+      <small>長按才會動</small>
+    </button>
+  </div>
+
+  <div class="footer">
+    <div>Topic：<code>motor/control</code></div>
+    <div>Payload：<code>extend / retract / stop</code></div>
+  </div>
+
+<script>
+  const TOPIC = 'motor/control';
+
+  const dot = document.getElementById('dot');
+  const statusText = document.getElementById('statusText');
+
+  function setStatus(mode, text){
+    statusText.textContent = text;
+
+    if(mode === 'ok'){
+      dot.style.background = 'var(--ok)';
+      dot.style.boxShadow = '0 0 0 4px rgba(37,211,102,.12)';
+    } else if(mode === 'warn'){
+      dot.style.background = 'var(--warn)';
+      dot.style.boxShadow = '0 0 0 4px rgba(255,204,0,.12)';
+    } else if(mode === 'err'){
+      dot.style.background = 'var(--danger)';
+      dot.style.boxShadow = '0 0 0 4px rgba(255,77,77,.12)';
+    } else {
+      dot.style.background = 'var(--info)';
+      dot.style.boxShadow = '0 0 0 4px rgba(58,160,255,.12)';
+    }
+  }
+
+  setStatus('warn', '連線中…');
+
+  // HiveMQ 公開 broker（WebSocket）
+  const client = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', {
+    keepalive: 30,
+    reconnectPeriod: 1000
+  });
+
+  client.on('connect', () => setStatus('ok', '已連線'));
+  client.on('reconnect', () => setStatus('warn', '重連中…'));
+  client.on('close', () => setStatus('warn', '連線關閉'));
+  client.on('error', (err) => {
+    console.error(err);
+    setStatus('err', '連線錯誤');
+  });
+
+  function publish(cmd){
+    if(!client.connected){
+      setStatus('warn', '未連線');
+      return;
+    }
+    client.publish(TOPIC, cmd);
+    // console.log('publish', TOPIC, cmd);
+  }
+
+  // 長按控制：按下送 extend/retract，放開送 stop
+  function bindHold(buttonEl, cmdOnHold) {
+    let holding = false;
+
+    const start = (e) => {
+      e.preventDefault();
+      if(holding) return;
+      holding = true;
+      buttonEl.classList.add('holding');
+      publish(cmdOnHold);
+    };
+
+    const stop = (e) => {
+      e.preventDefault();
+      if(!holding) return;
+      holding = false;
+      buttonEl.classList.remove('holding');
+      publish('stop');
+    };
+
+    // 觸控（手機）
+    buttonEl.addEventListener('touchstart', start, {passive:false});
+    buttonEl.addEventListener('touchend', stop, {passive:false});
+    buttonEl.addEventListener('touchcancel', stop, {passive:false});
+
+    // 滑鼠（電腦）
+    buttonEl.addEventListener('mousedown', start);
+    buttonEl.addEventListener('mouseup', stop);
+    buttonEl.addEventListener('mouseleave', stop);
+
+    // 以防瀏覽器失焦（切 app / 來電等），也送 stop（多一層保險）
+    window.addEventListener('blur', () => {
+      if(holding){
+        holding = false;
+        buttonEl.classList.remove('holding');
+        publish('stop');
+      }
+    });
+  }
+
+  bindHold(document.getElementById('btnExtend'), 'extend');
+  bindHold(document.getElementById('btnRetract'), 'retract');
+</script>
+
+</body>
+</html>

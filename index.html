@@ -14,6 +14,7 @@
       --border: rgba(232,238,247,.12);
       --btn: #1a2533;
       --btnDown: #233246;
+
       --danger: #ff4d4d;
       --warn: #ffcc00;
       --ok: #25d366;
@@ -21,22 +22,22 @@
     }
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); }
-    body {
+    body{
       font-family: system-ui, -apple-system, "Noto Sans TC", sans-serif;
-      display: flex;
-      flex-direction: column;
+      display:flex;
+      flex-direction:column;
       padding: 14px;
       gap: 12px;
-      user-select: none;            /* 防選字 */
-      -webkit-user-select: none;
-      touch-action: manipulation;   /* 減少雙擊縮放問題 */
+      user-select:none;
+      -webkit-user-select:none;
+      touch-action: manipulation;
     }
 
     .topbar{
       background: var(--panel);
       border: 1px solid var(--border);
       border-radius: 14px;
-      padding: 12px 12px;
+      padding: 12px;
       display:flex;
       align-items:center;
       justify-content:space-between;
@@ -66,10 +67,11 @@
       box-shadow: 0 0 0 4px rgba(255,204,0,.12);
     }
 
+    /* 三段按鍵：上/中/下 */
     .grid{
       flex: 1;
-      display: grid;
-      grid-template-rows: 1fr 1fr;
+      display:grid;
+      grid-template-rows: 1fr 0.9fr 1fr; /* 中間略大也可以調 */
       gap: 12px;
       min-height: 0;
     }
@@ -86,8 +88,8 @@
       justify-content:center;
       flex-direction:column;
       gap: 10px;
-      font-size: 28px;
-      font-weight: 700;
+      font-size: 30px;
+      font-weight: 800;
       letter-spacing: .5px;
     }
     .btn small{
@@ -98,6 +100,17 @@
     .btn:active, .btn.holding{
       background: var(--btnDown);
       transform: scale(0.99);
+    }
+
+    /* 緊急停止鍵（紅色系，置中超醒目） */
+    .stop{
+      background: rgba(255,77,77,.15);
+      border-color: rgba(255,77,77,.35);
+      font-size: 34px;
+    }
+    .stop small{ color: rgba(232,238,247,.85); }
+    .stop:active{
+      background: rgba(255,77,77,.25);
     }
 
     .footer{
@@ -132,6 +145,11 @@
     <button class="btn" id="btnExtend">
       ⬆ 伸出
       <small>長按才會動</small>
+    </button>
+
+    <button class="btn stop" id="btnStop">
+      ⏹ 緊急停止
+      <small>點一下立刻停</small>
     </button>
 
     <button class="btn" id="btnRetract">
@@ -171,7 +189,6 @@
 
   setStatus('warn', '連線中…');
 
-  // HiveMQ 公開 broker（WebSocket）
   const client = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', {
     keepalive: 30,
     reconnectPeriod: 1000
@@ -180,10 +197,7 @@
   client.on('connect', () => setStatus('ok', '已連線'));
   client.on('reconnect', () => setStatus('warn', '重連中…'));
   client.on('close', () => setStatus('warn', '連線關閉'));
-  client.on('error', (err) => {
-    console.error(err);
-    setStatus('err', '連線錯誤');
-  });
+  client.on('error', (err) => { console.error(err); setStatus('err', '連線錯誤'); });
 
   function publish(cmd){
     if(!client.connected){
@@ -191,10 +205,9 @@
       return;
     }
     client.publish(TOPIC, cmd);
-    // console.log('publish', TOPIC, cmd);
   }
 
-  // 長按控制：按下送 extend/retract，放開送 stop
+  // 長按：按下送 extend/retract；放開送 stop
   function bindHold(buttonEl, cmdOnHold) {
     let holding = false;
 
@@ -214,17 +227,15 @@
       publish('stop');
     };
 
-    // 觸控（手機）
     buttonEl.addEventListener('touchstart', start, {passive:false});
     buttonEl.addEventListener('touchend', stop, {passive:false});
     buttonEl.addEventListener('touchcancel', stop, {passive:false});
 
-    // 滑鼠（電腦）
     buttonEl.addEventListener('mousedown', start);
     buttonEl.addEventListener('mouseup', stop);
     buttonEl.addEventListener('mouseleave', stop);
 
-    // 以防瀏覽器失焦（切 app / 來電等），也送 stop（多一層保險）
+    // 失焦保險：切 app / 來電等也送 stop
     window.addEventListener('blur', () => {
       if(holding){
         holding = false;
@@ -236,6 +247,17 @@
 
   bindHold(document.getElementById('btnExtend'), 'extend');
   bindHold(document.getElementById('btnRetract'), 'retract');
+
+  // 緊急停止：點一下就 stop（觸控/滑鼠都支援）
+  const btnStop = document.getElementById('btnStop');
+  btnStop.addEventListener('click', (e) => {
+    e.preventDefault();
+    publish('stop');
+  });
+  btnStop.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    publish('stop');
+  }, {passive:false});
 </script>
 
 </body>
